@@ -4,6 +4,8 @@
 [![license](https://img.shields.io/npm/l/claude-usage-line)](LICENSE)
 [![node](https://img.shields.io/node/v/claude-usage-line)](package.json)
 
+<img width="663" height="141" alt="Screenshot 2026-03-29 at 20 19 21" src="https://github.com/user-attachments/assets/d78c061c-c263-4252-aed9-f1c4252cf94d" />
+
 Cross-platform Claude Code statusline — session context, 5-hour & 7-day rate limits, git branch, diff stats, cost, and duration. Zero runtime dependencies, no `jq` required.
 
 **Full output** (when Claude Code sends extended data):
