@@ -1,7 +1,8 @@
-import { readFileSync, writeFileSync, renameSync, mkdirSync, unlinkSync, statSync, openSync, writeSync, closeSync, lstatSync, constants } from 'fs';
+import { readFileSync, readdirSync, writeFileSync, renameSync, mkdirSync, unlinkSync, statSync, openSync, writeSync, closeSync, lstatSync, constants } from 'fs';
 import { dirname } from 'path';
 import { request } from 'https';
-import { getCachePath, getCostDeltaPath, getBrlRatePath } from './platform.js';
+import { join } from 'path';
+import { getCachePath, getCostDeltaPath, getBrlRatePath, getPanesDir } from './platform.js';
 import type { CachedUsage, RateLimitBucket, CostDeltaCache, BrlRateCache } from './types.js';
 
 const CACHE_TTL = 60; // seconds
@@ -177,4 +178,41 @@ export function getBrlRate(): number | null {
     return null;
   }
   return null;
+}
+
+// --- Pane cost aggregation ---
+
+const PANE_STALE_TTL = 60 * 60 * 1000; // 1 hour
+
+export function writePaneCost(paneId: string, costUsd: number): void {
+  const dir = getPanesDir();
+  mkdirSync(dir, { recursive: true, mode: 0o700 });
+  const path = join(dir, paneId + '.json');
+  writeFileSync(path, JSON.stringify({ cost: costUsd, ts: Date.now() }), { mode: 0o600 });
+}
+
+export function readAllPanesCost(): number {
+  const dir = getPanesDir();
+  let files: string[];
+  try {
+    files = readdirSync(dir);
+  } catch {
+    return 0;
+  }
+  const now = Date.now();
+  let total = 0;
+  for (const f of files) {
+    if (!f.endsWith('.json')) continue;
+    try {
+      const data = JSON.parse(readFileSync(join(dir, f), 'utf-8'));
+      if (typeof data.cost === 'number' && typeof data.ts === 'number') {
+        if (now - data.ts < PANE_STALE_TTL) {
+          total += data.cost;
+        } else {
+          try { unlinkSync(join(dir, f)); } catch {}
+        }
+      }
+    } catch {}
+  }
+  return total;
 }

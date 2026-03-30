@@ -51,6 +51,20 @@ export function getBrlRatePath(): string {
   return join(xdgCache, 'claude-usage-line', 'brl-rate.json');
 }
 
+export function getPanesDir(): string {
+  const p = getPlatform();
+  const home = homedir();
+  if (p === 'win32') {
+    const appData = process.env.LOCALAPPDATA || join(home, 'AppData', 'Local');
+    return join(appData, 'claude-usage-line', 'panes');
+  }
+  if (p === 'darwin') {
+    return join(home, 'Library', 'Caches', 'claude-usage-line', 'panes');
+  }
+  const xdgCache = process.env.XDG_CACHE_HOME || join(home, '.cache');
+  return join(xdgCache, 'claude-usage-line', 'panes');
+}
+
 export function getCredentialsPath(): string {
   return join(homedir(), '.claude', '.credentials.json');
 }

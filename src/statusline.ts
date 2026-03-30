@@ -20,6 +20,7 @@ interface ResolvedUsage {
 interface Extras {
   delta: number | null;
   brlRate: number | null;
+  allPanesTotal: number | null;
 }
 
 function resolveUsage(input: StatuslineInput): ResolvedUsage {
@@ -92,6 +93,13 @@ function buildExtras(input: StatuslineInput, hide: Set<HiddenField>, sep: string
       parts.push(DIM + BLUE + '⏱ ' + formatDuration(total_duration_ms) + RST);
     }
   }
+  if (!hide.has('total') && extras.allPanesTotal !== null && extras.allPanesTotal > 0) {
+    let totalStr = CYAN + '∑ $' + extras.allPanesTotal.toFixed(2) + RST;
+    if (!hide.has('brl') && extras.brlRate !== null) {
+      totalStr += DIM + ' (R$' + (extras.allPanesTotal * extras.brlRate).toFixed(2) + ')' + RST;
+    }
+    parts.push(totalStr);
+  }
   return parts;
 }
 
@@ -113,7 +121,7 @@ function renderBarsLine(input: StatuslineInput, style: BarStyle, usage: Resolved
   return extraParts.join(sep) + '\n' + bars;
 }
 
-export function renderStatusline(input: StatuslineInput, style: BarStyle, hide: Set<HiddenField> = new Set(), extras: Extras = { delta: null, brlRate: null }): string {
+export function renderStatusline(input: StatuslineInput, style: BarStyle, hide: Set<HiddenField> = new Set(), extras: Extras = { delta: null, brlRate: null, allPanesTotal: null }): string {
   const usage = resolveUsage(input);
 
   if (!hasExtendedInput(input)) {
@@ -149,7 +157,7 @@ export function renderStatusline(input: StatuslineInput, style: BarStyle, hide: 
   return lines.join('\n');
 }
 
-export function buildJSONOutput(input: StatuslineInput, hide: Set<HiddenField> = new Set(), extras: Extras = { delta: null, brlRate: null }): JSONOutput {
+export function buildJSONOutput(input: StatuslineInput, hide: Set<HiddenField> = new Set(), extras: Extras = { delta: null, brlRate: null, allPanesTotal: null }): JSONOutput {
   const { sesPct, fhPct, wkPct, fhRemain, wkRemain, cached } = resolveUsage(input);
   const branch = !hide.has('branch') && input.cwd ? getGitBranch(input.cwd) : null;
 
@@ -178,6 +186,7 @@ export function buildJSONOutput(input: StatuslineInput, hide: Set<HiddenField> =
     },
     cost_usd: !hide.has('cost') ? (input.cost?.total_cost_usd ?? null) : null,
     last_task_cost_usd: !hide.has('cost') && !hide.has('delta') ? (extras.delta ?? null) : null,
+    all_panes_cost_usd: !hide.has('total') ? (extras.allPanesTotal ?? null) : null,
     brl_rate: !hide.has('brl') ? (extras.brlRate ?? null) : null,
     duration_min: !hide.has('duration') && typeof input.cost?.total_duration_ms === 'number'
       ? Math.floor(input.cost.total_duration_ms / 60_000)
