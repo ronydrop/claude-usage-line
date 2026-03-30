@@ -5,10 +5,10 @@ process.stdout.on('error', (e: NodeJS.ErrnoException) => { if (e.code === 'EPIPE
 import { renderStatusline, buildJSONOutput } from './statusline.js';
 import { runSetup } from './setup.js';
 import { getStyle, styleNames, DEFAULT_STYLE } from './styles.js';
-import { computeCostDelta, writeCostDelta, getBrlRate, writePaneCost, readAllPanesCost } from './cache.js';
+import { computeCostDelta, writeCostDelta, getBrlRate, writePaneCost } from './cache.js';
 import type { StatuslineInput, HiddenField } from './types.js';
 
-const VALID_HIDE_FIELDS = new Set<HiddenField>(['cost', 'diff', 'duration', 'model', 'cwd', 'branch', 'delta', 'brl', 'total']);
+const VALID_HIDE_FIELDS = new Set<HiddenField>(['cost', 'diff', 'duration', 'model', 'cwd', 'branch', 'delta', 'brl']);
 
 const STDIN_TIMEOUT = 3000;
 const MAX_STDIN = 64 * 1024;
@@ -167,18 +167,16 @@ async function main(): Promise<void> {
     writeCostDelta(costUsd);
   }
 
-  // Write per-pane cost and aggregate all panes
+  // Write per-pane cost for zj-bar aggregation
   const paneId = process.env.ZELLIJ_PANE_ID;
-  let allPanesTotal: number | null = null;
   if (paneId && typeof costUsd === 'number') {
     writePaneCost(paneId, costUsd);
-    allPanesTotal = readAllPanesCost();
   }
 
   // BRL exchange rate (cached, fetches in background when stale)
   const brlRate = getBrlRate();
 
-  const extras = { delta, brlRate, allPanesTotal };
+  const extras = { delta, brlRate };
 
   if (json) {
     process.stdout.write(JSON.stringify(buildJSONOutput(input, hide, extras)) + '\n');

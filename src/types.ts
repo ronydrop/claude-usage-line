@@ -1,4 +1,4 @@
-export type HiddenField = 'cost' | 'diff' | 'duration' | 'model' | 'cwd' | 'branch' | 'delta' | 'brl' | 'total';
+export type HiddenField = 'cost' | 'diff' | 'duration' | 'model' | 'cwd' | 'branch' | 'delta' | 'brl';
 
 export interface StatuslineInput {
   context_window: {
