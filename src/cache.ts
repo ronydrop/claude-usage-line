@@ -1,7 +1,8 @@
 import { readFileSync, writeFileSync, renameSync, mkdirSync, unlinkSync, statSync, openSync, writeSync, closeSync, lstatSync, constants } from 'fs';
 import { dirname } from 'path';
-import { getCachePath } from './platform.js';
-import type { CachedUsage, RateLimitBucket } from './types.js';
+import { request } from 'https';
+import { getCachePath, getCostDeltaPath, getBrlRatePath } from './platform.js';
+import type { CachedUsage, RateLimitBucket, CostDeltaCache, BrlRateCache } from './types.js';
 
 const CACHE_TTL = 60; // seconds
 const LOCK_TTL = 30_000; // ms
@@ -87,4 +88,93 @@ export function releaseFetchLock(): void {
     const content = readFileSync(lockPath, 'utf-8').trim();
     if (content === String(process.pid)) unlinkSync(lockPath);
   } catch {}
+}
+
+// --- Cost delta tracking ---
+
+const COST_SESSION_TTL = 30 * 60 * 1000; // 30 minutes
+
+export function readCostDelta(): CostDeltaCache | null {
+  try {
+    const data = readFileSync(getCostDeltaPath(), 'utf-8');
+    const obj = JSON.parse(data);
+    if (typeof obj.prev_total === 'number' && typeof obj.timestamp === 'number') {
+      return obj as CostDeltaCache;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+export function writeCostDelta(total: number): void {
+  const path = getCostDeltaPath();
+  mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
+  const tmp = path + '.' + process.pid + '.tmp';
+  try { unlinkSync(tmp); } catch {}
+  safeWriteExclusive(tmp, JSON.stringify({ prev_total: total, timestamp: Date.now() }), 0o600);
+  renameSync(tmp, path);
+}
+
+export function computeCostDelta(currentTotal: number): number | null {
+  const cached = readCostDelta();
+  if (!cached) return null;
+  if (Date.now() - cached.timestamp > COST_SESSION_TTL) return null;
+  const delta = currentTotal - cached.prev_total;
+  if (delta < 0) return null; // session reset
+  return delta;
+}
+
+// --- BRL exchange rate ---
+
+const BRL_RATE_TTL = 6 * 60 * 60 * 1000; // 6 hours
+const BRL_FETCH_TIMEOUT = 2000; // ms
+
+function fetchBrlRateFromApi(): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const req = request(
+      { hostname: 'economia.awesomeapi.com.br', path: '/last/USD-BRL', timeout: BRL_FETCH_TIMEOUT },
+      (res) => {
+        const chunks: Buffer[] = [];
+        res.on('data', (c: Buffer) => chunks.push(c));
+        res.on('end', () => {
+          try {
+            const obj = JSON.parse(Buffer.concat(chunks).toString('utf-8'));
+            const bid = parseFloat(obj?.USDBRL?.bid);
+            if (Number.isFinite(bid) && bid > 0) resolve(bid);
+            else reject(new Error('invalid rate'));
+          } catch { reject(new Error('parse error')); }
+        });
+      }
+    );
+    req.on('error', reject);
+    req.on('timeout', () => { req.destroy(); reject(new Error('timeout')); });
+    req.end();
+  });
+}
+
+export function getBrlRate(): number | null {
+  const path = getBrlRatePath();
+  // Try cache first
+  try {
+    const data = readFileSync(path, 'utf-8');
+    const obj = JSON.parse(data) as BrlRateCache;
+    if (typeof obj.rate === 'number' && typeof obj.fetched_at === 'number') {
+      if (Date.now() - obj.fetched_at < BRL_RATE_TTL) return obj.rate;
+      // Stale — fetch in background, return stale for now
+      fetchBrlRateFromApi().then((rate) => {
+        mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
+        writeFileSync(path, JSON.stringify({ rate, fetched_at: Date.now() }), { mode: 0o600 });
+      }).catch(() => {});
+      return obj.rate;
+    }
+  } catch {
+    // No cache — try sync-style via immediate background fetch, return null for first render
+    fetchBrlRateFromApi().then((rate) => {
+      mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
+      writeFileSync(path, JSON.stringify({ rate, fetched_at: Date.now() }), { mode: 0o600 });
+    }).catch(() => {});
+    return null;
+  }
+  return null;
 }

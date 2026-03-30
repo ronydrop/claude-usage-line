@@ -17,6 +17,11 @@ interface ResolvedUsage {
   cached: CachedUsage | null;
 }
 
+interface Extras {
+  delta: number | null;
+  brlRate: number | null;
+}
+
 function resolveUsage(input: StatuslineInput): ResolvedUsage {
   const cached = readCache();
   if (isCacheStale(cached)) {
@@ -58,7 +63,7 @@ function hasExtendedInput(input: StatuslineInput): boolean {
   return !!(input.cwd || input.model);
 }
 
-function buildExtras(input: StatuslineInput, hide: Set<HiddenField>, sep: string): string[] {
+function buildExtras(input: StatuslineInput, hide: Set<HiddenField>, sep: string, extras: Extras): string[] {
   const parts: string[] = [];
   if (input.cost) {
     const { total_lines_added, total_lines_removed, total_cost_usd, total_duration_ms } = input.cost;
@@ -68,7 +73,23 @@ function buildExtras(input: StatuslineInput, hide: Set<HiddenField>, sep: string
       parts.push(GREEN + '+' + added + RST + ' ' + RED + '-' + removed + RST);
     }
     if (!hide.has('cost') && typeof total_cost_usd === 'number') {
-      parts.push(YELLOW + '$' + total_cost_usd.toFixed(2) + RST);
+      let costStr = YELLOW + '$' + total_cost_usd.toFixed(2) + RST;
+
+      if (!hide.has('brl') && extras.brlRate !== null) {
+        const brl = (total_cost_usd * extras.brlRate).toFixed(2);
+        costStr += DIM + ' (R$' + brl + ')' + RST;
+      }
+
+      if (!hide.has('delta') && extras.delta !== null && extras.delta > 0) {
+        const decimals = extras.delta < 0.10 ? 3 : 2;
+        costStr += ' ' + DIM + '(+$' + extras.delta.toFixed(decimals) + RST;
+        if (!hide.has('brl') && extras.brlRate !== null) {
+          costStr += DIM + ' / R$' + (extras.delta * extras.brlRate).toFixed(2) + RST;
+        }
+        costStr += DIM + ')' + RST;
+      }
+
+      parts.push(costStr);
     }
     if (!hide.has('duration') && typeof total_duration_ms === 'number' && total_duration_ms > 0) {
       parts.push(DIM + BLUE + '⏱ ' + formatDuration(total_duration_ms) + RST);
@@ -86,20 +107,20 @@ function buildBarParts(style: BarStyle, usage: ResolvedUsage): string[] {
   ];
 }
 
-function renderBarsLine(input: StatuslineInput, style: BarStyle, usage: ResolvedUsage, hide: Set<HiddenField>): string {
+function renderBarsLine(input: StatuslineInput, style: BarStyle, usage: ResolvedUsage, hide: Set<HiddenField>, extras: Extras): string {
   const sep = ' ' + dim(style.separator) + ' ';
-  const extras = buildExtras(input, hide, sep);
+  const extraParts = buildExtras(input, hide, sep, extras);
   const bars = buildBarParts(style, usage).join(sep);
 
-  if (extras.length === 0) return bars;
-  return extras.join(sep) + '\n' + bars;
+  if (extraParts.length === 0) return bars;
+  return extraParts.join(sep) + '\n' + bars;
 }
 
-export function renderStatusline(input: StatuslineInput, style: BarStyle, hide: Set<HiddenField> = new Set()): string {
+export function renderStatusline(input: StatuslineInput, style: BarStyle, hide: Set<HiddenField> = new Set(), extras: Extras = { delta: null, brlRate: null }): string {
   const usage = resolveUsage(input);
 
   if (!hasExtendedInput(input)) {
-    return renderBarsLine(input, style, usage, hide);
+    return renderBarsLine(input, style, usage, hide, extras);
   }
 
   const sep = ' ' + dim(style.separator) + ' ';
@@ -116,7 +137,7 @@ export function renderStatusline(input: StatuslineInput, style: BarStyle, hide: 
   } else if (branch) {
     line1Parts.push(GREEN + branch + RST);
   }
-  line1Parts.push(...buildExtras(input, hide, sep));
+  line1Parts.push(...buildExtras(input, hide, sep, extras));
 
   // Line 2: model + bars
   const line2Parts: string[] = [];
@@ -131,7 +152,7 @@ export function renderStatusline(input: StatuslineInput, style: BarStyle, hide: 
   return lines.join('\n');
 }
 
-export function buildJSONOutput(input: StatuslineInput, hide: Set<HiddenField> = new Set()): JSONOutput {
+export function buildJSONOutput(input: StatuslineInput, hide: Set<HiddenField> = new Set(), extras: Extras = { delta: null, brlRate: null }): JSONOutput {
   const { sesPct, fhPct, wkPct, fhRemain, wkRemain, cached } = resolveUsage(input);
   const branch = !hide.has('branch') && input.cwd ? getGitBranch(input.cwd) : null;
 
@@ -159,6 +180,8 @@ export function buildJSONOutput(input: StatuslineInput, hide: Set<HiddenField> =
       removed: !hide.has('diff') ? (input.cost?.total_lines_removed ?? 0) : 0,
     },
     cost_usd: !hide.has('cost') ? (input.cost?.total_cost_usd ?? null) : null,
+    last_task_cost_usd: !hide.has('cost') && !hide.has('delta') ? (extras.delta ?? null) : null,
+    brl_rate: !hide.has('brl') ? (extras.brlRate ?? null) : null,
     duration_min: !hide.has('duration') && typeof input.cost?.total_duration_ms === 'number'
       ? Math.floor(input.cost.total_duration_ms / 60_000)
       : null,

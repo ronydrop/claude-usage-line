@@ -5,9 +5,10 @@ process.stdout.on('error', (e: NodeJS.ErrnoException) => { if (e.code === 'EPIPE
 import { renderStatusline, buildJSONOutput } from './statusline.js';
 import { runSetup } from './setup.js';
 import { getStyle, styleNames, DEFAULT_STYLE } from './styles.js';
+import { computeCostDelta, writeCostDelta, getBrlRate } from './cache.js';
 import type { StatuslineInput, HiddenField } from './types.js';
 
-const VALID_HIDE_FIELDS = new Set<HiddenField>(['cost', 'diff', 'duration', 'model', 'cwd', 'branch']);
+const VALID_HIDE_FIELDS = new Set<HiddenField>(['cost', 'diff', 'duration', 'model', 'cwd', 'branch', 'delta', 'brl']);
 
 const STDIN_TIMEOUT = 3000;
 const MAX_STDIN = 64 * 1024;
@@ -117,7 +118,7 @@ async function main(): Promise<void> {
       '       claude-usage-line setup\n\n' +
       'Options:\n' +
       '  --style <name>  Bar style (classic, dot, braille, block, ascii, square, pipe)\n' +
-      '  --hide <fields> Hide fields: cost,diff,duration,model,cwd,branch\n' +
+      '  --hide <fields> Hide fields: cost,diff,duration,model,cwd,branch,delta,brl\n' +
       '  --sep <name>    Separator style: bullet (default), pipe\n' +
       '  --json          Output JSON\n' +
       '  --help          Show this help\n' +
@@ -158,15 +159,27 @@ async function main(): Promise<void> {
 
   const input = validateInput(parsed);
 
+  // Compute cost delta and update cache
+  let delta: number | null = null;
+  if (typeof input.cost?.total_cost_usd === 'number') {
+    delta = computeCostDelta(input.cost.total_cost_usd);
+    writeCostDelta(input.cost.total_cost_usd);
+  }
+
+  // BRL exchange rate (cached, fetches in background when stale)
+  const brlRate = getBrlRate();
+
+  const extras = { delta, brlRate };
+
   if (json) {
-    process.stdout.write(JSON.stringify(buildJSONOutput(input, hide)) + '\n');
+    process.stdout.write(JSON.stringify(buildJSONOutput(input, hide, extras)) + '\n');
   } else {
     let style = getStyle(styleName)!;
     if (sep) {
       const resolved = SEPARATORS[sep] ?? sep;
       style = { ...style, separator: resolved };
     }
-    process.stdout.write(renderStatusline(input, style, hide) + '\n');
+    process.stdout.write(renderStatusline(input, style, hide, extras) + '\n');
   }
 }
 

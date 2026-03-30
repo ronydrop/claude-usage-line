@@ -23,6 +23,34 @@ export function getCachePath(): string {
   return join(xdgCache, 'claude-usage-line', 'cache.json');
 }
 
+export function getCostDeltaPath(): string {
+  const p = getPlatform();
+  const home = homedir();
+  if (p === 'win32') {
+    const appData = process.env.LOCALAPPDATA || join(home, 'AppData', 'Local');
+    return join(appData, 'claude-usage-line', 'cost-delta.json');
+  }
+  if (p === 'darwin') {
+    return join(home, 'Library', 'Caches', 'claude-usage-line', 'cost-delta.json');
+  }
+  const xdgCache = process.env.XDG_CACHE_HOME || join(home, '.cache');
+  return join(xdgCache, 'claude-usage-line', 'cost-delta.json');
+}
+
+export function getBrlRatePath(): string {
+  const p = getPlatform();
+  const home = homedir();
+  if (p === 'win32') {
+    const appData = process.env.LOCALAPPDATA || join(home, 'AppData', 'Local');
+    return join(appData, 'claude-usage-line', 'brl-rate.json');
+  }
+  if (p === 'darwin') {
+    return join(home, 'Library', 'Caches', 'claude-usage-line', 'brl-rate.json');
+  }
+  const xdgCache = process.env.XDG_CACHE_HOME || join(home, '.cache');
+  return join(xdgCache, 'claude-usage-line', 'brl-rate.json');
+}
+
 export function getCredentialsPath(): string {
   return join(homedir(), '.claude', '.credentials.json');
 }

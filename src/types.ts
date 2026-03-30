@@ -1,4 +1,4 @@
-export type HiddenField = 'cost' | 'diff' | 'duration' | 'model' | 'cwd' | 'branch';
+export type HiddenField = 'cost' | 'diff' | 'duration' | 'model' | 'cwd' | 'branch' | 'delta' | 'brl';
 
 export interface StatuslineInput {
   context_window: {
@@ -36,6 +36,16 @@ export interface CachedUsage {
   fetched_at: number;
 }
 
+export interface CostDeltaCache {
+  prev_total: number;
+  timestamp: number;
+}
+
+export interface BrlRateCache {
+  rate: number;
+  fetched_at: number;
+}
+
 export interface JSONOutput {
   model: string | null;
   cwd: string | null;
@@ -60,5 +70,7 @@ export interface JSONOutput {
     removed: number;
   };
   cost_usd: number | null;
+  last_task_cost_usd: number | null;
+  brl_rate: number | null;
   duration_min: number | null;
 }
