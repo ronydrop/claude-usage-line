@@ -74,22 +74,19 @@ function buildExtras(input: StatuslineInput, hide: Set<HiddenField>, sep: string
     }
     if (!hide.has('cost') && typeof total_cost_usd === 'number') {
       let costStr = YELLOW + '$' + total_cost_usd.toFixed(2) + RST;
-
       if (!hide.has('brl') && extras.brlRate !== null) {
-        const brl = (total_cost_usd * extras.brlRate).toFixed(2);
-        costStr += DIM + ' (R$' + brl + ')' + RST;
+        costStr += DIM + ' (R$' + (total_cost_usd * extras.brlRate).toFixed(2) + ')' + RST;
       }
+      parts.push(costStr);
 
       if (!hide.has('delta') && extras.delta !== null && extras.delta > 0) {
         const decimals = extras.delta < 0.10 ? 3 : 2;
-        costStr += ' ' + DIM + '(+$' + extras.delta.toFixed(decimals) + RST;
+        let deltaStr = DIM + YELLOW + '$' + extras.delta.toFixed(decimals) + RST;
         if (!hide.has('brl') && extras.brlRate !== null) {
-          costStr += DIM + ' / R$' + (extras.delta * extras.brlRate).toFixed(2) + RST;
+          deltaStr += DIM + ' (R$' + (extras.delta * extras.brlRate).toFixed(2) + ')' + RST;
         }
-        costStr += DIM + ')' + RST;
+        parts.push(deltaStr);
       }
-
-      parts.push(costStr);
     }
     if (!hide.has('duration') && typeof total_duration_ms === 'number' && total_duration_ms > 0) {
       parts.push(DIM + BLUE + '⏱ ' + formatDuration(total_duration_ms) + RST);
