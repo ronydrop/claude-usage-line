@@ -1,4 +1,4 @@
-import { GREEN, RED, YELLOW, BLUE, MAGENTA, CYAN, DIM, RST, dim } from './ansi.js';
+import { GREEN, RED, YELLOW, BLUE, MAGENTA, CYAN, DIM, RST, dim, colorByThreshold } from './ansi.js';
 import { renderBar } from './bar.js';
 import { readCache, isCacheStale } from './cache.js';
 import { formatRemaining } from './time.js';
@@ -28,8 +28,15 @@ function resolveUsage(input: StatuslineInput): ResolvedUsage {
     spawnBackgroundFetch();
   }
 
+  let sesPct = Math.floor(input.context_window.used_percentage ?? 0);
+  if (sesPct === 0 && input.context_window.context_window_size && input.context_window.current_usage) {
+    const { input_tokens = 0, cache_creation_input_tokens = 0, cache_read_input_tokens = 0 } = input.context_window.current_usage;
+    const total = input_tokens + cache_creation_input_tokens + cache_read_input_tokens;
+    sesPct = Math.min(100, Math.floor((total / input.context_window.context_window_size) * 100));
+  }
+
   return {
-    sesPct: Math.floor(input.context_window.used_percentage ?? 0),
+    sesPct,
     fhPct: Math.floor(cached?.five_hour?.utilization ?? 0),
     wkPct: Math.floor(cached?.seven_day?.utilization ?? 0),
     fhRemain: formatRemaining(cached?.five_hour?.resets_at),
@@ -57,6 +64,45 @@ function formatDuration(ms: number): string {
   const d = Math.floor(totalH / 24);
   const h = totalH % 24;
   return h > 0 ? `${d}d${h}h` : `${d}d`;
+}
+
+function getTerminalWidth(): number | null {
+  const cols = process.stdout.columns || process.stderr.columns;
+  if (typeof cols === 'number' && cols > 0) return Math.floor(cols);
+  const envCols = parseInt(process.env.COLUMNS ?? '', 10);
+  if (Number.isFinite(envCols) && envCols > 0) return envCols;
+  return null;
+}
+
+function getTerminalHeight(): number | null {
+  const rows = process.stdout.rows || process.stderr.rows;
+  if (typeof rows === 'number' && rows > 0) return Math.floor(rows);
+  const envRows = parseInt(process.env.LINES ?? '', 10);
+  if (Number.isFinite(envRows) && envRows > 0) return envRows;
+  return null;
+}
+
+function renderPct(pct: number, baseColor: string): string {
+  return colorByThreshold(pct, baseColor) + Math.floor(pct) + '%' + RST;
+}
+
+const EFFORT_COLORS: Record<string, string> = {
+  low: DIM + BLUE,
+  medium: BLUE,
+  high: YELLOW,
+  xhigh: RED,
+  max: RED,
+};
+
+function buildModelParts(input: StatuslineInput, hide: Set<HiddenField>): string[] {
+  const parts: string[] = [];
+  if (!hide.has('model') && input.model?.display_name) {
+    parts.push(MAGENTA + input.model.display_name + RST);
+  }
+  if (!hide.has('effort') && input.effort) {
+    parts.push((EFFORT_COLORS[input.effort.level] ?? DIM) + input.effort.level + RST);
+  }
+  return parts;
 }
 
 function hasExtendedInput(input: StatuslineInput): boolean {
@@ -95,32 +141,71 @@ function buildExtras(input: StatuslineInput, hide: Set<HiddenField>, sep: string
   return parts;
 }
 
-function buildBarParts(style: BarStyle, usage: ResolvedUsage): string[] {
+function buildBarParts(style: BarStyle, usage: ResolvedUsage, barWidth: number): string[] {
   const { sesPct, fhPct, wkPct, fhRemain, wkRemain } = usage;
+  const s = { ...style, width: barWidth };
+  if (barWidth === 0) {
+    return [
+      'Cx ' + renderPct(sesPct, MAGENTA),
+      '5h ' + renderPct(fhPct, CYAN) + ' ' + DIM + CYAN + style.resetIcon + fhRemain + RST,
+      '7d ' + renderPct(wkPct, GREEN) + ' ' + DIM + GREEN + style.resetIcon + wkRemain + RST,
+    ];
+  }
   return [
-    'Cx ' + renderBar(sesPct, MAGENTA, style),
-    '5h ' + renderBar(fhPct, CYAN, style) + ' ' + DIM + CYAN + style.resetIcon + fhRemain + RST,
-    '7d ' + renderBar(wkPct, GREEN, style) + ' ' + DIM + GREEN + style.resetIcon + wkRemain + RST,
+    'Cx ' + renderBar(sesPct, MAGENTA, s),
+    '5h ' + renderBar(fhPct, CYAN, s) + ' ' + DIM + CYAN + style.resetIcon + fhRemain + RST,
+    '7d ' + renderBar(wkPct, GREEN, s) + ' ' + DIM + GREEN + style.resetIcon + wkRemain + RST,
   ];
 }
 
-function renderBarsLine(input: StatuslineInput, style: BarStyle, usage: ResolvedUsage, hide: Set<HiddenField>, extras: Extras): string {
-  const sep = ' ' + dim(style.separator) + ' ';
-  const extraParts = buildExtras(input, hide, sep, extras);
-  const bars = buildBarParts(style, usage).join(sep);
-
-  if (extraParts.length === 0) return bars;
-  return extraParts.join(sep) + '\n' + bars;
+// Returns the last N segments of the path, always prefixed with ~/ if applicable
+function truncateCwd(cwd: string, maxLen: number): string {
+  const shortened = shortenCwd(cwd);
+  if (shortened.length <= maxLen) return shortened;
+  const parts = shortened.replace(/\\/g, '/').split('/').filter(Boolean);
+  // Always show at least the last segment
+  for (let take = 1; take <= parts.length; take++) {
+    const candidate = (shortened.startsWith('~') ? '~/' : '/') + parts.slice(-take).join('/');
+    if (candidate.length <= maxLen || take === parts.length) return candidate;
+  }
+  return parts[parts.length - 1] ?? shortened;
 }
 
 export function renderStatusline(input: StatuslineInput, style: BarStyle, hide: Set<HiddenField> = new Set(), extras: Extras = { delta: null, brlRate: null }): string {
   const usage = resolveUsage(input);
+  const termWidth = getTerminalWidth();
+  const sep = ' ' + dim(style.separator) + ' ';
 
-  if (!hasExtendedInput(input)) {
-    return renderBarsLine(input, style, usage, hide, extras);
+  // Compute adaptive bar width.
+  // Full line 2 overhead (no bars): model(~12) + effort(~6) + 4 seps(12) + labels+pcts("Cx 100%"=7, "5h 100% ⟳3h26m"=15, "7d 100% ⟳3h26m"=15) = ~67
+  // Each bar adds `barWidth` chars × 3 bars = 3*barWidth total.
+  const LINE2_OVERHEAD = 67;
+  let barWidth = style.width;
+  if (termWidth !== null) {
+    const available = termWidth - LINE2_OVERHEAD;
+    barWidth = Math.max(0, Math.min(style.width, Math.floor(available / 3)));
   }
 
-  const sep = ' ' + dim(style.separator) + ' ';
+  const termHeight = getTerminalHeight();
+  // Collapse to 1 line when pane is short (< 8 rows) or very narrow (< 45 cols)
+  const compact = (termHeight !== null && termHeight < 8) || (termWidth !== null && termWidth < 45);
+
+  if (!hasExtendedInput(input)) {
+    const extraParts = buildExtras(input, hide, sep, extras);
+    const bars = buildBarParts(style, usage, barWidth).join(sep);
+    if (extraParts.length === 0) return bars;
+    if (compact) return [...extraParts, bars].join(sep);
+    return extraParts.join(sep) + '\n' + bars;
+  }
+
+  if (compact) {
+    const parts: string[] = [];
+    parts.push(...buildModelParts(input, hide));
+    parts.push(...buildBarParts(style, usage, barWidth));
+    parts.push(...buildExtras(input, hide, sep, extras));
+    return parts.join(sep);
+  }
+
   const showCwd = !hide.has('cwd') && !!input.cwd;
   const showBranch = !hide.has('branch') && !!input.cwd;
   const branch = showBranch ? getGitBranch(input.cwd!) : null;
@@ -128,7 +213,8 @@ export function renderStatusline(input: StatuslineInput, style: BarStyle, hide: 
   // Line 1: cwd/branch + extras
   const line1Parts: string[] = [];
   if (showCwd) {
-    let cwdPart = BLUE + shortenCwd(input.cwd!) + RST;
+    const maxCwdLen = termWidth ? Math.max(10, termWidth - 30) : 60;
+    let cwdPart = BLUE + truncateCwd(input.cwd!, maxCwdLen) + RST;
     if (branch) cwdPart += ' → ' + GREEN + branch + RST;
     line1Parts.push(cwdPart);
   } else if (branch) {
@@ -136,12 +222,10 @@ export function renderStatusline(input: StatuslineInput, style: BarStyle, hide: 
   }
   line1Parts.push(...buildExtras(input, hide, sep, extras));
 
-  // Line 2: model + bars
+  // Line 2: model + bars (always present)
   const line2Parts: string[] = [];
-  if (!hide.has('model') && input.model?.display_name) {
-    line2Parts.push(MAGENTA + input.model.display_name + RST);
-  }
-  line2Parts.push(...buildBarParts(style, usage));
+  line2Parts.push(...buildModelParts(input, hide));
+  line2Parts.push(...buildBarParts(style, usage, barWidth));
 
   const lines: string[] = [];
   if (line1Parts.length > 0) lines.push(line1Parts.join(sep));
@@ -155,6 +239,7 @@ export function buildJSONOutput(input: StatuslineInput, hide: Set<HiddenField> =
 
   return {
     model: !hide.has('model') ? (input.model?.display_name ?? null) : null,
+    effort: !hide.has('effort') ? (input.effort?.level ?? null) : null,
     cwd: !hide.has('cwd') ? (input.cwd ?? null) : null,
     git_branch: branch,
     session: {

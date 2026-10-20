@@ -1,12 +1,21 @@
-export type HiddenField = 'cost' | 'diff' | 'duration' | 'model' | 'cwd' | 'branch' | 'delta' | 'brl';
+export type HiddenField = 'cost' | 'diff' | 'duration' | 'model' | 'cwd' | 'branch' | 'delta' | 'brl' | 'effort';
 
 export interface StatuslineInput {
   context_window: {
     used_percentage: number;
+    context_window_size?: number;
+    current_usage?: {
+      input_tokens?: number;
+      cache_creation_input_tokens?: number;
+      cache_read_input_tokens?: number;
+    };
   };
   cwd?: string;
   model?: {
     display_name?: string;
+  };
+  effort?: {
+    level: string;
   };
   cost?: {
     total_lines_added?: number;
@@ -48,6 +57,7 @@ export interface BrlRateCache {
 
 export interface JSONOutput {
   model: string | null;
+  effort: string | null;
   cwd: string | null;
   git_branch: string | null;
   session: {

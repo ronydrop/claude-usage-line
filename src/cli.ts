@@ -8,7 +8,7 @@ import { getStyle, styleNames, DEFAULT_STYLE } from './styles.js';
 import { computeCostDelta, writeCostDelta, getBrlRate, writePaneCost } from './cache.js';
 import type { StatuslineInput, HiddenField } from './types.js';
 
-const VALID_HIDE_FIELDS = new Set<HiddenField>(['cost', 'diff', 'duration', 'model', 'cwd', 'branch', 'delta', 'brl']);
+const VALID_HIDE_FIELDS = new Set<HiddenField>(['cost', 'diff', 'duration', 'model', 'cwd', 'branch', 'delta', 'brl', 'effort']);
 
 const STDIN_TIMEOUT = 3000;
 const MAX_STDIN = 64 * 1024;
@@ -27,6 +27,18 @@ function validateInput(raw: unknown): StatuslineInput {
     context_window: { used_percentage: pct },
   };
 
+  if (typeof ctx.context_window_size === 'number' && ctx.context_window_size > 0) {
+    result.context_window.context_window_size = ctx.context_window_size;
+  }
+  const rawUsage = ctx.current_usage as Record<string, unknown> | undefined;
+  if (rawUsage && typeof rawUsage === 'object') {
+    result.context_window.current_usage = {
+      input_tokens: typeof rawUsage.input_tokens === 'number' ? rawUsage.input_tokens : 0,
+      cache_creation_input_tokens: typeof rawUsage.cache_creation_input_tokens === 'number' ? rawUsage.cache_creation_input_tokens : 0,
+      cache_read_input_tokens: typeof rawUsage.cache_read_input_tokens === 'number' ? rawUsage.cache_read_input_tokens : 0,
+    };
+  }
+
   if (typeof obj.cwd === 'string' && obj.cwd.length > 0) {
     result.cwd = obj.cwd;
   }
@@ -36,6 +48,11 @@ function validateInput(raw: unknown): StatuslineInput {
     if (typeof model.display_name === 'string' && model.display_name.length > 0) {
       result.model = { display_name: model.display_name };
     }
+  }
+
+  const effort = obj.effort as Record<string, unknown> | undefined;
+  if (effort && typeof effort === 'object' && typeof effort.level === 'string' && effort.level.length > 0) {
+    result.effort = { level: effort.level };
   }
 
   const cost = obj.cost as Record<string, unknown> | undefined;
@@ -118,7 +135,7 @@ async function main(): Promise<void> {
       '       claude-usage-line setup\n\n' +
       'Options:\n' +
       '  --style <name>  Bar style (classic, dot, braille, block, ascii, square, pipe)\n' +
-      '  --hide <fields> Hide fields: cost,diff,duration,model,cwd,branch,delta,brl\n' +
+      '  --hide <fields> Hide fields: cost,diff,duration,model,cwd,branch,delta,brl,effort\n' +
       '  --sep <name>    Separator style: bullet (default), pipe\n' +
       '  --json          Output JSON\n' +
       '  --help          Show this help\n' +
